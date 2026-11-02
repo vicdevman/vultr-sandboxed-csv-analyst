@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandboxed CSV Analyst</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --border: #e3e3de;
+    --accent: #0b5cff; --ok: #1a7f37; --bad: #c62828; --code-bg: #f1f1ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414; --panel: #1d1d1d; --text: #ececea; --muted: #9b9b96; --border: #2e2e2c;
+      --accent: #5b8cff; --ok: #4ac26b; --bad: #ff6b6b; --code-bg: #262624;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=file] { margin-bottom: 14px; max-width: 100%; }
+  textarea { width: 100%; min-height: 70px; padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+             background: var(--bg); color: var(--text); font: inherit; resize: vertical; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .chip { background: transparent; color: var(--accent); border: 1px solid var(--border); font-weight: 500; padding: 5px 10px; font-size: 13px; }
+  .limits { color: var(--muted); font-size: 13px; }
+  .limits code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .step { border-left: 3px solid var(--border); padding: 4px 0 4px 12px; margin: 12px 0; }
+  .step.ok { border-color: var(--ok); } .step.bad { border-color: var(--bad); }
+  .step-title { font-weight: 600; font-size: 14px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 10px; margin-left: 6px; }
+  .badge.ok { color: var(--ok); border: 1px solid var(--ok); } .badge.bad { color: var(--bad); border: 1px solid var(--bad); }
+  pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 13px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+  pre.err { color: var(--bad); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .charts img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #fff; margin-top: 8px; }
+  .answer { white-space: pre-wrap; font-size: 16px; }
+  .answer:not(:empty) { margin-bottom: 12px; }
+  .answer code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 14px; }
+  .status { color: var(--muted); font-size: 13px; }
+  .demo { border-top: 1px dashed var(--border); padding-top: 12px; margin-top: 14px; justify-content: space-between; }
+  .check { display: flex; align-items: center; gap: 6px; font-weight: 500; margin: 0; font-size: 14px; }
+  .danger { background: transparent; color: var(--bad); border: 1px solid var(--bad); font-size: 14px; }
+  .verdict { border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
+  .verdict.ok { border: 1px solid var(--ok); color: var(--text); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .verdict.bad { border: 1px solid var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+  .verdict-title { font-weight: 700; font-size: 18px; margin-bottom: 4px; }
+  .verdict.ok .verdict-title { color: var(--ok); } .verdict.bad .verdict-title { color: var(--bad); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sandboxed CSV Analyst</h1>
+  <p class="sub">Ask a question about a CSV. The model writes Python, a throwaway locked-down container runs it, and the model explains the real output.</p>
+
+
+  <form class="panel" id="form">
+    <label for="file">CSV file</label>
+    <input type="file" id="file" accept=".csv,text/csv" required>
+    <label for="q">Question</label>
+    <textarea id="q" required maxlength="1000" placeholder="Which region had the highest revenue? Make a chart."></textarea>
+    <div class="row">
+      <button type="submit" id="go">Analyze</button>
+      <button type="button" class="chip" data-q="Summarize this dataset: columns, row count, and anything notable.">Summarize</button>
+      <button type="button" class="chip" data-q="Which region had the highest total revenue (units x unit_price)? Make a bar chart.">Top region</button>
+      <button type="button" class="chip" data-q="Show the revenue trend by calendar month as a line chart.">Monthly trend</button>
+      <button type="button" class="chip" data-q="Read every value in the note column and tell me what the notes say.">Read notes</button>
+    </div>
+    <div class="row demo">
+      <label class="check"><input type="checkbox" id="guard" checked> Prompt-injection guard</label>
+      <button type="button" class="danger" id="attack">Containment test: run attacker payload</button>
+    </div>
+  </form>
+
+  <p class="limits">Every run: <code>--network none</code> · read-only filesystem · no secrets · non-root ·
+    memory, CPU, process and time limits · container destroyed afterwards.</p>
+
+  <section class="panel hidden" id="out">
+    <div class="status" id="status"></div>
+    <div class="verdict hidden" id="verdict"></div>
+    <div class="answer" id="answer"></div>
+    <div class="charts" id="charts"></div>
+    <div id="steps"></div>
+  </section>
+</main>
+
+<script>
+// Everything shown here comes from the model or from model-written code, which a hostile CSV can steer.
+// So it is only ever inserted as text (textContent), never as HTML.
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+// Minimal markdown: **bold** and `code` only, built as DOM nodes so nothing is ever parsed as HTML.
+function renderAnswer(target, text) {
+  target.replaceChildren();
+  for (const part of text.split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) target.append(el("strong", null, part.slice(2, -2)));
+    else if (part.startsWith("`") && part.endsWith("`") && part.length > 2) target.append(el("code", null, part.slice(1, -1)));
+    else target.append(part);
+  }
+}
+const IMG_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg" };
+
+document.querySelectorAll(".chip").forEach((b) => b.onclick = () => { $("q").value = b.dataset.q; });
+
+let uploaded = null; // { file, id } so re-asking about the same file skips the upload
+
+function setBusy(busy) { $("go").disabled = busy; $("attack").disabled = busy; }
+
+async function ensureUploaded() {
+  const file = $("file").files[0];
+  if (!file) throw new Error("choose a CSV file first");
+  if (!uploaded || uploaded.file !== file) {
+    $("status").textContent = "Uploading…";
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    uploaded = { file, id: (await r.json()).id };
+  }
+  return uploaded.id;
+}
+
+async function start(makeUrl, stepLabel) {
+  setBusy(true);
+  $("out").classList.remove("hidden");
+  $("steps").replaceChildren(); $("charts").replaceChildren(); $("answer").textContent = "";
+  $("verdict").replaceChildren(); $("verdict").className = "verdict hidden";
+  let id;
+  try { id = await ensureUploaded(); }
+  catch (err) { $("status").textContent = "Upload failed: " + err.message; setBusy(false); return; }
+
+  $("status").textContent = "Thinking…";
+  const src = new EventSource(makeUrl(id));
+  let current = null;
+
+  src.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "info") {
+      $("status").textContent = ev.content;
+    } else if (ev.type === "code") {
+      current = el("div", "step");
+      const t = el("div", "step-title", `Run ${$("steps").children.length + 1}: ${stepLabel}`);
+      const d = el("details"); d.append(el("summary", null, "show code"), el("pre", null, ev.content));
+      current.append(t, d); $("steps").append(current);
+      $("status").textContent = "Running in sandbox…";
+    } else if (ev.type === "result" && current) {
+      current.classList.add(ev.ok ? "ok" : "bad");
+      current.firstChild.append(el("span", "badge " + (ev.ok ? "ok" : "bad"),
+        ev.ok ? "ok" : ev.timed_out ? "timed out" : `failed (exit ${ev.exit_code})`));
+      if (ev.stdout) current.append(el("pre", null, ev.stdout));
+      if (ev.stderr) current.append(el("pre", "err", ev.stderr));
+      for (const f of ev.files) {
+        const mime = IMG_TYPES[f.name.split(".").pop().toLowerCase()];
+        if (!mime) continue;
+        const img = el("img"); img.alt = f.name; img.src = `data:${mime};base64,${f.b64}`;
+        $("charts").append(img);
+      }
+      $("status").textContent = ev.ok ? "Thinking…" : "Run failed, model is repairing the code…";
+    } else if (ev.type === "verdict") {
+      const contained = ev.leaked === 0;
+      $("verdict").className = "verdict " + (contained ? "ok" : "bad");
+      $("verdict").append(
+        el("div", "verdict-title", contained ? "Contained" : "CONTAINMENT FAILED"),
+        el("div", null, `Host secrets leaked: ${ev.leaked} of ${ev.secrets_on_host} (checked on the server against the real values)`),
+        el("div", null, `Attack attempts blocked: ${ev.blocked} of ${ev.attempts}. ` +
+          "The rest ran but only saw the sandbox's own empty environment. Container destroyed."));
+    } else if (ev.type === "error") {
+      $("steps").append(el("pre", "err", ev.content));
+    } else if (ev.type === "answer") {
+      renderAnswer($("answer"), ev.content);
+    } else if (ev.type === "done") {
+      src.close(); $("status").textContent = ""; setBusy(false);
+    }
+  };
+  src.onerror = () => {
+    src.close(); setBusy(false);
+    if ($("status").textContent) $("status").textContent = "Connection lost (or request rejected).";
+  };
+}
+
+$("form").onsubmit = (e) => {
+  e.preventDefault();
+  const q = $("q").value.trim();
+  if (!q) return;
+  start((id) => `/api/analyze?id=${id}&q=${encodeURIComponent(q)}&guard=${$("guard").checked}`, "model wrote code");
+};
+$("attack").onclick = () => start((id) => `/api/attack?id=${id}`, "attacker payload (no model)");
+</script>
+</body>
+</html>
